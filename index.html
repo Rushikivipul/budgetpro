@@ -30,25 +30,12 @@
     </style>
 </head>
 <body class="p-3 sm:p-6 md:p-8 pb-24 lg:pb-8">
-    <!-- Fail-Safe Loading Screen -->
+    <!-- Initial Loading Screen -->
     <div id="loading" class="loading-overlay">
         <div class="flex flex-col items-center p-8 text-center max-w-md">
             <div id="loadingSpinner" class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mb-4"></div>
             <h2 id="loadingTitle" class="text-lg font-bold text-slate-800 mb-2">Launching BudgetPro</h2>
-            <p id="loadingSubtitle" class="text-xs font-medium text-slate-400 uppercase tracking-widest">Connecting to Cloud</p>
-            
-            <div id="setupBox" class="hidden mt-8 w-full text-left">
-                <div class="bg-blue-50 p-4 rounded-2xl mb-4">
-                    <p class="text-xs text-blue-700 font-semibold mb-2">Setup Required for GitHub Hosting:</p>
-                    <p class="text-[11px] text-blue-600 leading-relaxed">
-                        1. Go to Firebase Console > Project Settings.<br>
-                        2. Copy your <b>firebaseConfig</b> object.<br>
-                        3. Paste it below to enable your private cloud.
-                    </p>
-                </div>
-                <textarea id="configInput" placeholder='{"apiKey": "...", ...}' class="w-full h-32 p-4 text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-                <button onclick="saveAndReload()" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-all">Save & Start App</button>
-            </div>
+            <p id="loadingSubtitle" class="text-xs font-medium text-slate-400 uppercase tracking-widest">Connecting to your private cloud</p>
         </div>
     </div>
 
@@ -74,8 +61,7 @@
                 <div class="flex flex-wrap items-center gap-2 mt-5">
                     <input type="month" id="monthPicker" class="bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-2xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer">
                     <button id="shareBtn" class="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 px-5 py-2.5 rounded-2xl active:bg-slate-50 transition-all">SHARE</button>
-                    <button id="exportBtn" class="flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-5 py-2.5 rounded-2xl active:bg-blue-100 transition-all">EXPORT</button>
-                    <button onclick="clearConfig()" class="text-[9px] font-bold text-slate-300 hover:text-red-400 uppercase ml-2">Reset App Data</button>
+                    <button id="exportBtn" class="flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-5 py-2.5 rounded-2xl active:bg-blue-100 transition-all">EXPORT CSV</button>
                 </div>
             </div>
             <div class="bg-blue-600 p-6 rounded-[32px] text-white shadow-2xl w-full lg:w-80 relative overflow-hidden">
@@ -145,14 +131,25 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // YOUR PERMANENT CONFIG
+        const firebaseConfig = {
+            apiKey: "AIzaSyC7YZynZfbqg43rYbcFLfutV41bCUaDJh4",
+            authDomain: "mybudgetpro-cb7fe.firebaseapp.com",
+            projectId: "mybudgetpro-cb7fe",
+            storageBucket: "mybudgetpro-cb7fe.firebasestorage.app",
+            messagingSenderId: "97116937605",
+            appId: "1:97116937605:web:eb5908b90dca93c53278ec"
+        };
 
         let db, auth, userId, unsubscribeTransactions;
         let selectedMonthKey = '';
         let transactions = [];
         let incomeValue = 45000;
         let resetConfirming = false;
+        const appId = 'budgetpro-live-v1';
 
         const categoriesConfig = [
             { id: 'Rent', name: 'Rent', fixedAmount: 17000, icon: '🏠', type: 'fixed' },
@@ -164,22 +161,6 @@
             { id: 'Buffer', name: 'Wealth Buffer', percent: 11, icon: '🛡️', type: 'variable' },
             { id: 'Other', name: 'Misc Expenses', percent: 0, icon: '📦', type: 'variable' }
         ];
-
-        // --- GLOBAL HELPERS ---
-        window.saveAndReload = () => {
-            const raw = document.getElementById('configInput').value;
-            try {
-                const match = raw.match(/\{[\s\S]*\}/);
-                const cleaned = (match ? match[0] : raw)
-                    .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
-                    .replace(/,(\s*[\}\]])/g, '$1');
-                JSON.parse(cleaned); // Validate
-                localStorage.setItem('budgetpro_config', cleaned);
-                location.reload();
-            } catch (e) { alert("Invalid Format. Please copy the whole config object correctly."); }
-        };
-
-        window.clearConfig = () => { if(confirm("This will clear your local cloud settings. Proceed?")) { localStorage.clear(); location.reload(); } };
 
         const showToast = (msg, icon = '✅') => {
             const t = document.getElementById('toast');
@@ -197,69 +178,42 @@
             else { dot.className = 'sync-dot bg-red-500'; txt.innerText = 'Offline'; }
         };
 
-        // --- STARTUP LOGIC ---
         const start = async () => {
-            let config;
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'budgetpro-live-v1';
-            
-            // Check for Config
-            if (typeof __firebase_config !== 'undefined') {
-                config = JSON.parse(__firebase_config);
-            } else {
-                const stored = localStorage.getItem('budgetpro_config');
-                if (stored) config = JSON.parse(stored);
-            }
-
-            if (!config) {
-                // Show setup if nothing found after 1.5 seconds
-                setTimeout(() => {
-                    document.getElementById('loadingSpinner').style.display = 'none';
-                    document.getElementById('loadingTitle').innerText = "Setup Required";
-                    document.getElementById('loadingSubtitle').innerText = "GitHub Hosting Detected";
-                    document.getElementById('setupBox').classList.remove('hidden');
-                }, 1000);
-                return;
-            }
-
             try {
-                const app = initializeApp(config);
+                const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
 
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                await signInAnonymously(auth);
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
                         document.getElementById('loading').style.display = 'none';
-                        setupApp(appId);
+                        setupApp();
                     }
                 });
             } catch (err) {
                 console.error(err);
-                localStorage.removeItem('budgetpro_config');
-                location.reload();
+                document.getElementById('loadingSubtitle').innerText = "Database Error. Check Firebase console.";
+                document.getElementById('loadingSubtitle').classList.add('text-red-500');
             }
         };
 
-        const setupApp = (appId) => {
+        const setupApp = () => {
             const now = new Date();
             selectedMonthKey = now.toISOString().slice(0, 7);
             document.getElementById('monthPicker').value = selectedMonthKey;
             
             document.getElementById('monthPicker').onchange = (e) => {
                 selectedMonthKey = e.target.value;
-                syncData(appId);
+                syncData();
             };
 
-            syncData(appId);
+            syncData();
         };
 
-        const syncData = async (appId) => {
+        const syncData = async () => {
             if (!userId) return;
             setSyncStatus('syncing');
             if (unsubscribeTransactions) unsubscribeTransactions();
@@ -276,7 +230,6 @@
                 renderUI();
             });
 
-            // Handlers
             document.getElementById('incomeInput').onchange = async (e) => {
                 incomeValue = parseFloat(e.target.value) || 0;
                 await setDoc(incomeRef, { income: incomeValue });
@@ -299,7 +252,7 @@
                     timestamp: Date.now()
                 });
                 nEl.value = ''; aEl.value = '';
-                showToast("Done!");
+                showToast("Saved!");
                 btn.disabled = false; btn.innerText = "SAVE TO CLOUD";
             };
 
@@ -343,7 +296,7 @@
                 let color = progress >= 100 ? 'bg-red-500' : progress > 85 ? 'bg-orange-500' : 'bg-blue-600';
                 
                 catContainer.innerHTML += `
-                    <div class="card p-5 border border-slate-100">
+                    <div class="card p-5 border border-slate-100 transition-all hover:shadow-lg">
                         <div class="flex justify-between items-center mb-3">
                             <span class="font-bold text-slate-700 flex items-center gap-2 text-sm">
                                 <span class="bg-slate-50 p-2 rounded-2xl">${c.icon}</span> ${c.name}
@@ -361,7 +314,6 @@
             document.getElementById('totalSpentDisplay').innerText = `₹${totalSpent.toLocaleString()}`;
             document.getElementById('remainingBalanceDisplay').innerText = `₹${(incomeValue - totalSpent).toLocaleString()}`;
             
-            // Daily Limit
             const now = new Date();
             const year = parseInt(selectedMonthKey.split('-')[0]);
             const month = parseInt(selectedMonthKey.split('-')[1]);
@@ -395,7 +347,9 @@
             const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = `BudgetPro_${selectedMonthKey}.csv`; a.click();
         };
 
-        window.shareApp = async () => {
+        document.getElementById('exportBtn').onclick = window.downloadExcel;
+
+        document.getElementById('shareBtn').onclick = async () => {
             const data = { title: 'BudgetPro', text: 'Wealth Planner', url: window.location.href };
             if (navigator.share) await navigator.share(data);
             else { await navigator.clipboard.writeText(window.location.href); showToast("Link Copied"); }
