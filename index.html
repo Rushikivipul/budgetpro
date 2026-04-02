@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BudgetPro - Independence Planner</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="BudgetPro">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#2563eb">
+    
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232563eb%22/><text y=%22.9em%22 x=%22.1em%22 font-size=%2270%22 fill=%22white%22>₹</text></svg>">
+    <link rel="manifest" href="data:application/manifest+json,{'name':'BudgetPro Planner','short_name':'BudgetPro','start_url':'.','display':'standalone','background_color':'#f8fafc','theme_color':'#2563eb','icons':[{'src':'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232563eb%22/><text y=%22.9em%22 x=%22.1em%22 font-size=%2270%22 fill=%22white%22>₹</text></svg>','sizes':'512x512','type':'image/svg+xml'}]}">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        .card { background: white; border-radius: 24px; box-shadow: 0 4px 20px -2px rgba(0,0,0,0.05); border: 1px solid #f1f5f9; }
+        .progress-bar { height: 10px; border-radius: 5px; background: #f1f5f9; overflow: hidden; }
+        .progress-fill { height: 100%; transition: width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .loading-overlay { position: fixed; inset: 0; background: #ffffff; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        #toast { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(100px); transition: transform 0.3s ease; z-index: 2000; }
+        #toast.show { transform: translateX(-50%) translateY(0); }
+        input, select, button { font-size: 16px !important; touch-action: manipulation; }
+        .sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body class="p-3 sm:p-6 md:p-8 pb-24 lg:pb-8">
+    <!-- Fail-Safe Loading Screen -->
+    <div id="loading" class="loading-overlay">
+        <div class="flex flex-col items-center p-8 text-center max-w-md">
+            <div id="loadingSpinner" class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mb-4"></div>
+            <h2 id="loadingTitle" class="text-lg font-bold text-slate-800 mb-2">Launching BudgetPro</h2>
+            <p id="loadingSubtitle" class="text-xs font-medium text-slate-400 uppercase tracking-widest">Connecting to Cloud</p>
+            
+            <div id="setupBox" class="hidden mt-8 w-full text-left">
+                <div class="bg-blue-50 p-4 rounded-2xl mb-4">
+                    <p class="text-xs text-blue-700 font-semibold mb-2">Setup Required for GitHub Hosting:</p>
+                    <p class="text-[11px] text-blue-600 leading-relaxed">
+                        1. Go to Firebase Console > Project Settings.<br>
+                        2. Copy your <b>firebaseConfig</b> object.<br>
+                        3. Paste it below to enable your private cloud.
+                    </p>
+                </div>
+                <textarea id="configInput" placeholder='{"apiKey": "...", ...}' class="w-full h-32 p-4 text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl mb-4 outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                <button onclick="saveAndReload()" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-all">Save & Start App</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast UI -->
+    <div id="toast" class="bg-slate-900 text-white px-8 py-4 rounded-2xl text-xs font-bold shadow-2xl flex items-center gap-3">
+        <span id="toastIcon">✅</span> <span id="toastMsg">Ready</span>
+    </div>
+
+    <div class="max-w-5xl mx-auto">
+        <!-- Header -->
+        <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-6">
+            <div class="w-full lg:w-auto">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-xl">₹</div>
+                    <div>
+                        <h1 class="text-2xl sm:text-4xl font-black text-slate-800 tracking-tight">BudgetPro</h1>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span id="syncIndicator" class="sync-dot bg-orange-400"></span>
+                            <span id="syncText" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest uppercase">Syncing...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-5">
+                    <input type="month" id="monthPicker" class="bg-white border border-slate-200 text-slate-700 text-sm font-bold rounded-2xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm cursor-pointer">
+                    <button id="shareBtn" class="flex items-center gap-2 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 px-5 py-2.5 rounded-2xl active:bg-slate-50 transition-all">SHARE</button>
+                    <button id="exportBtn" class="flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 px-5 py-2.5 rounded-2xl active:bg-blue-100 transition-all">EXPORT</button>
+                    <button onclick="clearConfig()" class="text-[9px] font-bold text-slate-300 hover:text-red-400 uppercase ml-2">Reset App Data</button>
+                </div>
+            </div>
+            <div class="bg-blue-600 p-6 rounded-[32px] text-white shadow-2xl w-full lg:w-80 relative overflow-hidden">
+                <label class="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-70 italic">Monthly Income</label>
+                <div class="flex items-center font-bold">
+                    <span class="text-3xl mr-1.5 text-blue-200">₹</span>
+                    <input type="number" id="incomeInput" value="45000" class="bg-transparent text-3xl border-none focus:ring-0 w-full outline-none">
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Stats -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-10">
+            <div class="card p-7 border-l-8 border-green-500">
+                <p class="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-2">Total Expenses</p>
+                <h3 class="text-3xl font-black text-slate-800" id="totalSpentDisplay">₹0</h3>
+            </div>
+            <div class="card p-7 border-l-8 border-blue-500">
+                <p class="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-2">Balance Left</p>
+                <h3 class="text-3xl font-black text-slate-800" id="remainingBalanceDisplay">₹0</h3>
+            </div>
+            <div class="card p-7 border-l-8 border-orange-500 bg-orange-50/20">
+                <p class="text-[10px] uppercase font-bold text-orange-600 tracking-widest mb-2">Daily Safe Spend</p>
+                <h3 class="text-3xl font-black text-slate-800" id="dailyLimitDisplay">₹0</h3>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div class="lg:col-span-7 space-y-6">
+                <h2 class="text-xl font-bold text-slate-800 px-1">Budget Pulse</h2>
+                <div id="categoryList" class="space-y-4"></div>
+            </div>
+
+            <div class="lg:col-span-5 space-y-8">
+                <div class="card p-8 border-2 border-blue-50">
+                    <h2 class="text-xl font-bold text-slate-800 mb-6">Log Expense</h2>
+                    <div class="space-y-5">
+                        <input type="text" id="expenseName" placeholder="Where did it go?" class="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500">
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="number" id="expenseAmount" placeholder="Amount" class="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500">
+                            <select id="expenseCategory" class="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer">
+                                <option value="Transport">Transport</option>
+                                <option value="Food/Grocery">Food</option>
+                                <option value="Lifestyle">Lifestyle</option>
+                                <option value="Family">Family</option>
+                                <option value="Rent">Rent</option>
+                                <option value="Gold">Gold</option>
+                                <option value="Buffer">Buffer</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <button id="saveBtn" class="w-full bg-blue-600 text-white py-5 rounded-[20px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all">Save To Cloud</button>
+                    </div>
+                </div>
+
+                <div class="card p-8">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xl font-bold text-slate-800">Ledger</h2>
+                        <button id="resetBtn" class="text-[10px] text-red-500 font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl hover:bg-red-50 transition-all">Reset Month</button>
+                    </div>
+                    <div id="transactionHistory" class="space-y-4 max-h-[600px] overflow-y-auto pr-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let db, auth, userId, unsubscribeTransactions;
+        let selectedMonthKey = '';
+        let transactions = [];
+        let incomeValue = 45000;
+        let resetConfirming = false;
+
+        const categoriesConfig = [
+            { id: 'Rent', name: 'Rent', fixedAmount: 17000, icon: '🏠', type: 'fixed' },
+            { id: 'Transport', name: 'Transport', fixedAmount: 4500, icon: '🚌', type: 'fixed' },
+            { id: 'Family', name: 'Family Support', fixedAmount: 10000, icon: '👨‍👩', type: 'fixed' },
+            { id: 'Gold', name: 'Digital Gold', percent: 3.4, icon: '✨', type: 'fixed' },
+            { id: 'Food/Grocery', name: 'Food & Groceries', percent: 10, icon: '🛒', type: 'variable' },
+            { id: 'Lifestyle', name: 'Fun & Shopping', percent: 5.6, icon: '☕', type: 'variable' },
+            { id: 'Buffer', name: 'Wealth Buffer', percent: 11, icon: '🛡️', type: 'variable' },
+            { id: 'Other', name: 'Misc Expenses', percent: 0, icon: '📦', type: 'variable' }
+        ];
+
+        // --- GLOBAL HELPERS ---
+        window.saveAndReload = () => {
+            const raw = document.getElementById('configInput').value;
+            try {
+                const match = raw.match(/\{[\s\S]*\}/);
+                const cleaned = (match ? match[0] : raw)
+                    .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
+                    .replace(/,(\s*[\}\]])/g, '$1');
+                JSON.parse(cleaned); // Validate
+                localStorage.setItem('budgetpro_config', cleaned);
+                location.reload();
+            } catch (e) { alert("Invalid Format. Please copy the whole config object correctly."); }
+        };
+
+        window.clearConfig = () => { if(confirm("This will clear your local cloud settings. Proceed?")) { localStorage.clear(); location.reload(); } };
+
+        const showToast = (msg, icon = '✅') => {
+            const t = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            document.getElementById('toastIcon').innerText = icon;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        };
+
+        const setSyncStatus = (status) => {
+            const dot = document.getElementById('syncIndicator');
+            const txt = document.getElementById('syncText');
+            if (status === 'syncing') { dot.className = 'sync-dot bg-orange-400 animate-pulse'; txt.innerText = 'Syncing...'; }
+            else if (status === 'success') { dot.className = 'sync-dot bg-green-500'; txt.innerText = 'Cloud Active'; }
+            else { dot.className = 'sync-dot bg-red-500'; txt.innerText = 'Offline'; }
+        };
+
+        // --- STARTUP LOGIC ---
+        const start = async () => {
+            let config;
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'budgetpro-live-v1';
+            
+            // Check for Config
+            if (typeof __firebase_config !== 'undefined') {
+                config = JSON.parse(__firebase_config);
+            } else {
+                const stored = localStorage.getItem('budgetpro_config');
+                if (stored) config = JSON.parse(stored);
+            }
+
+            if (!config) {
+                // Show setup if nothing found after 1.5 seconds
+                setTimeout(() => {
+                    document.getElementById('loadingSpinner').style.display = 'none';
+                    document.getElementById('loadingTitle').innerText = "Setup Required";
+                    document.getElementById('loadingSubtitle').innerText = "GitHub Hosting Detected";
+                    document.getElementById('setupBox').classList.remove('hidden');
+                }, 1000);
+                return;
+            }
+
+            try {
+                const app = initializeApp(config);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('loading').style.display = 'none';
+                        setupApp(appId);
+                    }
+                });
+            } catch (err) {
+                console.error(err);
+                localStorage.removeItem('budgetpro_config');
+                location.reload();
+            }
+        };
+
+        const setupApp = (appId) => {
+            const now = new Date();
+            selectedMonthKey = now.toISOString().slice(0, 7);
+            document.getElementById('monthPicker').value = selectedMonthKey;
+            
+            document.getElementById('monthPicker').onchange = (e) => {
+                selectedMonthKey = e.target.value;
+                syncData(appId);
+            };
+
+            syncData(appId);
+        };
+
+        const syncData = async (appId) => {
+            if (!userId) return;
+            setSyncStatus('syncing');
+            if (unsubscribeTransactions) unsubscribeTransactions();
+
+            const incomeRef = doc(db, 'artifacts', appId, 'users', userId, 'monthlySettings', selectedMonthKey);
+            const snap = await getDoc(incomeRef);
+            incomeValue = snap.exists() ? snap.data().income : 45000;
+            document.getElementById('incomeInput').value = incomeValue;
+
+            const collRef = collection(db, 'artifacts', appId, 'users', userId, 'transactions_' + selectedMonthKey);
+            unsubscribeTransactions = onSnapshot(collRef, (snapshot) => {
+                transactions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                setSyncStatus('success');
+                renderUI();
+            });
+
+            // Handlers
+            document.getElementById('incomeInput').onchange = async (e) => {
+                incomeValue = parseFloat(e.target.value) || 0;
+                await setDoc(incomeRef, { income: incomeValue });
+                showToast("Income Saved");
+            };
+
+            document.getElementById('saveBtn').onclick = async () => {
+                const nEl = document.getElementById('expenseName');
+                const aEl = document.getElementById('expenseAmount');
+                const name = nEl.value.trim();
+                const amt = parseFloat(aEl.value);
+                if (!name || isNaN(amt) || amt <= 0) return;
+
+                const btn = document.getElementById('saveBtn');
+                btn.disabled = true; btn.innerText = "SAVING...";
+                
+                await setDoc(doc(collRef), {
+                    name, amount: amt, category: document.getElementById('expenseCategory').value,
+                    date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+                    timestamp: Date.now()
+                });
+                nEl.value = ''; aEl.value = '';
+                showToast("Done!");
+                btn.disabled = false; btn.innerText = "SAVE TO CLOUD";
+            };
+
+            window.deleteExpense = async (id) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'transactions_' + selectedMonthKey, id));
+            };
+
+            document.getElementById('resetBtn').onclick = async () => {
+                const btn = document.getElementById('resetBtn');
+                if (!resetConfirming) {
+                    resetConfirming = true;
+                    btn.innerText = "SURE?";
+                    btn.classList.add('bg-red-500', 'text-white');
+                    setTimeout(() => { resetConfirming = false; btn.innerText = "Reset Month"; btn.classList.remove('bg-red-500', 'text-white'); }, 3000);
+                } else {
+                    const snapshot = await getDocs(collRef);
+                    await Promise.all(snapshot.docs.map(d => deleteDoc(d.ref)));
+                    showToast("Cleared");
+                    resetConfirming = false;
+                    btn.innerText = "Reset Month";
+                    btn.classList.remove('bg-red-500', 'text-white');
+                }
+            };
+        };
+
+        const renderUI = () => {
+            const catContainer = document.getElementById('categoryList');
+            catContainer.innerHTML = '';
+            let totalSpent = 0;
+            let cats = categoriesConfig.map(c => ({...c, spent: 0}));
+            transactions.forEach(t => {
+                const c = cats.find(cat => cat.id === t.category) || cats.find(cat => cat.id === 'Other');
+                c.spent += t.amount;
+                totalSpent += t.amount;
+            });
+
+            cats.filter(c => c.id !== 'Other' || c.spent > 0).forEach(c => {
+                let target = c.fixedAmount ?? Math.floor(incomeValue * (c.percent / 100));
+                let progress = target > 0 ? Math.min((c.spent / target) * 100, 100) : 0;
+                let rem = target - c.spent;
+                let color = progress >= 100 ? 'bg-red-500' : progress > 85 ? 'bg-orange-500' : 'bg-blue-600';
+                
+                catContainer.innerHTML += `
+                    <div class="card p-5 border border-slate-100">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="font-bold text-slate-700 flex items-center gap-2 text-sm">
+                                <span class="bg-slate-50 p-2 rounded-2xl">${c.icon}</span> ${c.name}
+                            </span>
+                            <span class="text-sm font-black text-slate-800">₹${c.spent.toLocaleString()} / ₹${target.toLocaleString()}</span>
+                        </div>
+                        <div class="progress-bar mb-2"><div class="progress-fill ${color}" style="width: ${progress}%"></div></div>
+                        <div class="flex justify-between text-[10px] uppercase font-black tracking-widest">
+                            <span class="text-slate-300">${progress.toFixed(0)}% Used</span>
+                            <span class="${rem < 0 ? 'text-red-500' : 'text-blue-500'} font-black">₹${Math.abs(rem).toLocaleString()} ${rem < 0 ? 'Over' : 'Safe'}</span>
+                        </div>
+                    </div>`;
+            });
+
+            document.getElementById('totalSpentDisplay').innerText = `₹${totalSpent.toLocaleString()}`;
+            document.getElementById('remainingBalanceDisplay').innerText = `₹${(incomeValue - totalSpent).toLocaleString()}`;
+            
+            // Daily Limit
+            const now = new Date();
+            const year = parseInt(selectedMonthKey.split('-')[0]);
+            const month = parseInt(selectedMonthKey.split('-')[1]);
+            if (now.getFullYear() === year && (now.getMonth() + 1) === month) {
+                const lastDay = new Date(year, month, 0).getDate();
+                const daysLeft = Math.max(lastDay - now.getDate() + 1, 1);
+                let fixedSum = cats.filter(c => c.type === 'fixed').reduce((a,c) => a + (c.fixedAmount ?? Math.floor(incomeValue * (c.percent / 100))), 0);
+                let pool = incomeValue - fixedSum - cats.filter(c => c.type === 'variable').reduce((a,c) => a + c.spent, 0);
+                document.getElementById('dailyLimitDisplay').innerText = `₹${Math.max(0, Math.floor(pool / daysLeft)).toLocaleString()}`;
+            }
+
+            document.getElementById('transactionHistory').innerHTML = [...transactions].sort((a,b) => b.timestamp - a.timestamp).map(t => `
+                <div class="flex justify-between items-center p-5 bg-slate-50/50 rounded-3xl hover:bg-white border border-transparent hover:border-blue-100 transition-all">
+                    <div class="flex-grow">
+                        <p class="font-bold text-slate-800 text-sm">${t.name}</p>
+                        <p class="text-[9px] text-slate-400 uppercase font-black mt-1 tracking-widest">${t.date} • ${t.category}</p>
+                    </div>
+                    <div class="flex items-center gap-5">
+                        <p class="font-black text-slate-700 text-sm">₹${t.amount.toLocaleString()}</p>
+                        <button onclick="window.deleteExpense('${t.id}')" class="text-slate-200 hover:text-red-500 transition-colors p-1">
+                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                </div>`).join('');
+        };
+
+        window.downloadExcel = () => {
+            let csv = `BudgetPro Export - ${selectedMonthKey}\n\nDATE,DESCRIPTION,CATEGORY,AMOUNT\n`;
+            transactions.forEach(t => csv += `"${t.date}","${t.name}","${t.category}","₹${t.amount}"\n`);
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = `BudgetPro_${selectedMonthKey}.csv`; a.click();
+        };
+
+        window.shareApp = async () => {
+            const data = { title: 'BudgetPro', text: 'Wealth Planner', url: window.location.href };
+            if (navigator.share) await navigator.share(data);
+            else { await navigator.clipboard.writeText(window.location.href); showToast("Link Copied"); }
+        };
+
+        start();
+    </script>
+</body>
+</html>
